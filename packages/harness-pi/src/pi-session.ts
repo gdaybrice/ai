@@ -78,6 +78,7 @@ import {
   type PiPendingToolBatch,
   type PiSessionEntries,
 } from './pi-lifecycle-state';
+import { createPiHistoryAnnotator } from './pi-history-metadata';
 import { runToolBatchReplay, takeToolBatchForReplay } from './pi-tool-batch';
 import {
   createPiTranslatorState,
@@ -1264,6 +1265,10 @@ export async function createPiSession(
       nativeToCommon: activeNativeToCommon,
     });
 
+    const historyAnnotator = createPiHistoryAnnotator({
+      sessionWorkDir,
+      getBranch: () => getSessionManager().getBranch(),
+    });
     unsubscribe = piSession.subscribe(rawEvent => {
       if (!translatorState) return;
       const event = parseNativeEvent(rawEvent);
@@ -1276,7 +1281,10 @@ export async function createPiSession(
        * step accounting stays intact; only step boundaries are forwarded.
        */
       const suppressed = isReplaySuppressedEvent(event);
-      for (const part of translatePiEvent(event, translatorState)) {
+      for (const part of historyAnnotator.annotate(
+        event,
+        translatePiEvent(event, translatorState),
+      )) {
         if (suppressed && part.type !== 'finish-step') continue;
         if (currentEmit) {
           currentEmit(part);
