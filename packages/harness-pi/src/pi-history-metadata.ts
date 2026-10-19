@@ -6,7 +6,10 @@ import type { PiSessionEvent } from './pi-events';
 type PiMetadata = HarnessV1Metadata[string];
 type JSONValue = PiMetadata[string];
 
+export const PI_HISTORY_VERSION = 1;
+
 export type PiAssistantMetadata = {
+  version: number;
   message: Record<string, JSONValue>;
   thinking: { signature: string | null; redacted: boolean }[];
 };
@@ -109,6 +112,7 @@ export function createPiHistoryAnnotator({
         }
         const { content: _content, role: _role, ...fields } = message;
         const assistant: PiAssistantMetadata = {
+          version: PI_HISTORY_VERSION,
           message: toJSON(fields) as Record<string, JSONValue>,
           thinking: content
             .filter(block => block.type === 'thinking')
@@ -138,7 +142,6 @@ export function createPiHistoryAnnotator({
         }
         if (part.type === 'tool-call') {
           const { nativeName, ...call } = toolCalls.get(part.toolCallId) ?? {};
-          toolCalls.delete(part.toolCallId);
           const pi: PiMetadata = {
             ...call,
             ...(nativeName != null && nativeName !== part.toolName
@@ -146,6 +149,7 @@ export function createPiHistoryAnnotator({
               : {}),
             ...(pendingAssistant ? { assistant: pendingAssistant } : {}),
           };
+          toolCalls.set(part.toolCallId, pi);
           pendingAssistant = undefined;
           return Object.keys(pi).length === 0 ? part : withPi(part, pi);
         }
@@ -157,10 +161,21 @@ export function createPiHistoryAnnotator({
           const texts = content
             .filter(block => block.type === 'text')
             .map(block => block.text as string);
-          return event.isError === true ||
+          const call = toolCalls.get(part.toolCallId);
+          toolCalls.delete(part.toolCallId);
+          const assistant = pendingAssistant;
+          pendingAssistant = undefined;
+          const pi: PiMetadata = {
+            ...(event.isError === true ? call : {}),
+            ...(assistant ? { assistant } : {}),
+          };
+          if (
+            event.isError === true ||
             texts.some(text => text.includes(sessionWorkDir))
-            ? withPi(part, { rawText: texts })
-            : part;
+          ) {
+            pi.rawText = texts;
+          }
+          return Object.keys(pi).length === 0 ? part : withPi(part, pi);
         }
         return part;
       });

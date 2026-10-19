@@ -265,6 +265,41 @@ entries. Nothing about the session is stored in the sandbox, so restoring a
 session reads no sandbox files. A state recorded before this format restores as
 a fresh session.
 
+## Rebuilding a Session from UI Messages
+
+The lifecycle state holds the whole conversation, including image bytes from
+tool results. An application that already stores its UI messages can rebuild the
+lifecycle data from them instead of storing the state as well. The Pi harness
+adds the details Pi needs to its stream parts, under `pi` in their provider
+metadata: thinking signatures, usage, model, stop reason, raw tool text where
+`HarnessAgent` removed the session work directory, and compaction positions.
+Store the UI messages with their `providerMetadata`, `callProviderMetadata` and
+`resultProviderMetadata`, and with tool outputs as they were streamed.
+
+```ts
+import { piLifecycleDataFromUIMessages } from '@ai-sdk/harness-pi';
+
+const data = piLifecycleDataFromUIMessages({ messages });
+
+const session = await agent.createSession({
+  sessionId,
+  sandboxSession,
+  resumeFrom: {
+    type: 'resume-session',
+    harnessId: 'pi',
+    specificationVersion: 'harness-v1',
+    data,
+  },
+});
+```
+
+When the last step has tool calls without output, the rebuilt data includes the
+tool batch that waits on host input, so the same data can continue a suspended
+turn through `continueFrom`. A last step that was cut off before Pi recorded it
+is left out, and Pi generates it again. Messages without the Pi metadata, for
+example ones streamed by another harness or an older version, make
+`piLifecycleDataFromUIMessages` throw a `HarnessError`.
+
 ## Authentication
 
 The `auth` setting selects which credentials Pi reads from the host environment:

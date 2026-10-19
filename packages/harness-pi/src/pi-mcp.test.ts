@@ -18,6 +18,7 @@ import {
   createScriptedModelServerThenDone,
   listen,
   readBody,
+  toolCallChunks,
   type ModelRequestBody,
 } from './test-helpers';
 
@@ -178,31 +179,17 @@ const createMcpServer = () => {
   return { server, requests, sessionIds, deletedSessionIds };
 };
 
-const toolCallChunks = (name: string, args: object): object[] => [
-  {
-    choices: [
-      {
-        index: 0,
-        delta: {
-          role: 'assistant',
-          tool_calls: [
-            {
-              index: 0,
-              id: `call-${name}`,
-              type: 'function',
-              function: { name, arguments: JSON.stringify(args) },
-            },
-          ],
-        },
-      },
-    ],
-  },
-  { choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] },
-];
-
 const MODEL_SCRIPT: ReadonlyArray<ReadonlyArray<object>> = [
-  toolCallChunks('tool_search', { query: 'brand check' }),
-  toolCallChunks('mcp__brand_ai__brand_check', { query: 'hello' }),
+  toolCallChunks({
+    id: 'call-tool_search',
+    name: 'tool_search',
+    args: { query: 'brand check' },
+  }),
+  toolCallChunks({
+    id: 'call-mcp__brand_ai__brand_check',
+    name: 'mcp__brand_ai__brand_check',
+    args: { query: 'hello' },
+  }),
 ];
 
 const declaredToolNames = (body: ModelRequestBody | undefined): string[] =>

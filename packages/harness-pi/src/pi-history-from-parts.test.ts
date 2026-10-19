@@ -1,6 +1,7 @@
 import { buildSessionContext } from '@earendil-works/pi-coding-agent';
 import { describe, expect, it } from 'vitest';
 import { piLifecycleDataFromUIMessages } from './pi-history-from-parts';
+import { PI_HISTORY_VERSION } from './pi-history-metadata';
 
 const usage = {
   input: 10,
@@ -14,6 +15,7 @@ const usage = {
 const assistantMetadata = (stopReason: string, signatures: string[] = []) => ({
   pi: {
     assistant: {
+      version: PI_HISTORY_VERSION,
       message: {
         api: 'anthropic-messages',
         provider: 'anthropic',
@@ -233,6 +235,7 @@ describe('piLifecycleDataFromUIMessages', () => {
               toolCallId: 'call-host',
               state: 'input-available',
               input: {},
+              callProviderMetadata: assistantMetadata('toolUse'),
             },
           ],
         },
@@ -241,5 +244,84 @@ describe('piLifecycleDataFromUIMessages', () => {
     });
 
     expect(data.pendingToolBatch).toBeUndefined();
+  });
+
+  it('leaves out a last step that was cut off before Pi finished it', () => {
+    const data = piLifecycleDataFromUIMessages({
+      messages: [
+        { role: 'user', parts: [{ type: 'text', text: 'Read a.txt' }] },
+        {
+          role: 'assistant',
+          parts: [
+            { type: 'step-start' },
+            {
+              type: 'text',
+              text: 'Reading it.',
+              providerMetadata: assistantMetadata('toolUse'),
+            },
+            { type: 'step-start' },
+            { type: 'text', text: 'It says' },
+            {
+              type: 'tool-read',
+              toolCallId: 'call-cut',
+              state: 'input-available',
+              input: { path: 'a.txt' },
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(data.pendingToolBatch).toBeUndefined();
+    expect(contextOf(data.entries!)).toEqual([
+      { role: 'user', content: [{ type: 'text', text: 'Read a.txt' }] },
+      expect.objectContaining({
+        role: 'assistant',
+        content: [{ type: 'text', text: 'Reading it.' }],
+      }),
+    ]);
+  });
+
+  it('throws for an earlier step without Pi history metadata', () => {
+    expect(() =>
+      piLifecycleDataFromUIMessages({
+        messages: [
+          { role: 'user', parts: [{ type: 'text', text: 'Hi' }] },
+          {
+            role: 'assistant',
+            parts: [{ type: 'step-start' }, { type: 'text', text: 'Hello' }],
+          },
+          { role: 'user', parts: [{ type: 'text', text: 'Again' }] },
+        ],
+      }),
+    ).toThrow('without Pi history metadata');
+  });
+
+  it('throws for Pi history metadata of another version', () => {
+    expect(() =>
+      piLifecycleDataFromUIMessages({
+        messages: [
+          { role: 'user', parts: [{ type: 'text', text: 'Hi' }] },
+          {
+            role: 'assistant',
+            parts: [
+              { type: 'step-start' },
+              {
+                type: 'text',
+                text: 'Hello',
+                providerMetadata: {
+                  pi: {
+                    assistant: {
+                      ...assistantMetadata('stop').pi.assistant,
+                      version: 2,
+                    },
+                  },
+                },
+              },
+            ],
+          },
+        ],
+      }),
+    ).toThrow('Pi history version 2');
   });
 });

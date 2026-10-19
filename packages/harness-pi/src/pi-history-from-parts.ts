@@ -1,8 +1,10 @@
+import { HarnessError } from '@ai-sdk/harness';
 import { secureJsonParse } from '@ai-sdk/provider-utils';
 import { CURRENT_SESSION_VERSION } from '@earendil-works/pi-coding-agent';
-import type {
-  PiAssistantMetadata,
-  PiCompactionMetadata,
+import {
+  PI_HISTORY_VERSION,
+  type PiAssistantMetadata,
+  type PiCompactionMetadata,
 } from './pi-history-metadata';
 import type { PiLifecycleData, PiSessionEntries } from './pi-lifecycle-state';
 import { serializeToolOutput } from './pi-utils';
@@ -26,17 +28,12 @@ const OUTPUT_STATES = new Set([
   'output-denied',
 ]);
 
-const EMPTY_USAGE = {
-  input: 0,
-  output: 0,
-  cacheRead: 0,
-  cacheWrite: 0,
-  totalTokens: 0,
-  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-};
-
 const piMetadataOf = (part: UIPart): Record<string, any> | undefined =>
-  (part.providerMetadata ?? part.callProviderMetadata)?.pi;
+  (
+    part.providerMetadata ??
+    part.callProviderMetadata ??
+    part.resultProviderMetadata
+  )?.pi;
 
 const isHarnessSyntheticTool = (part: UIPart) =>
   part.toolCallId.startsWith('harness-');
@@ -101,7 +98,10 @@ function splitSteps(parts: ReadonlyArray<UIPart>): UIPart[][] {
  * so the UI messages can be the only stored copy of the conversation. The
  * messages must have been streamed by the Pi harness and keep their provider
  * metadata. A last step whose tool calls have no output yet is a tool batch
- * that waits on host input, and comes back as `pendingToolBatch`.
+ * that waits on host input, and comes back as `pendingToolBatch`. A last step
+ * without metadata was cut off before Pi finished it and is left out. Any
+ * other step without metadata, or metadata of another version, throws a
+ * `HarnessError`.
  */
 export function piLifecycleDataFromUIMessages({
   messages,
@@ -125,7 +125,8 @@ export function piLifecycleDataFromUIMessages({
       continue;
     }
     if (message.role !== 'assistant') continue;
-    for (const step of splitSteps(message.parts)) {
+    const steps = splitSteps(message.parts);
+    for (const step of steps) {
       let assistant: PiAssistantMetadata | undefined;
       for (const part of step) {
         assistant ??= piMetadataOf(part)?.assistant;
@@ -177,17 +178,20 @@ export function piLifecycleDataFromUIMessages({
         }
       }
       if (content.length === 0) continue;
+      if (assistant == null) {
+        if (message === messages.at(-1) && step === steps.at(-1)) continue;
+        throw new HarnessError({
+          message:
+            'The UI messages contain an assistant step without Pi history metadata, so the Pi session cannot be rebuilt from them.',
+        });
+      }
+      if (assistant.version !== PI_HISTORY_VERSION) {
+        throw new HarnessError({
+          message: `The UI messages use Pi history version ${assistant.version}, but this version of the Pi harness rebuilds version ${PI_HISTORY_VERSION}.`,
+        });
+      }
       awaitingToolCallIds = awaiting;
-      history.push({
-        role: 'assistant',
-        content,
-        ...(assistant?.message ?? {
-          usage: EMPTY_USAGE,
-          stopReason:
-            toolResults.length + awaiting.length > 0 ? 'toolUse' : 'stop',
-          timestamp: 0,
-        }),
-      });
+      history.push({ role: 'assistant', content, ...assistant.message });
       history.push(...toolResults);
     }
   }

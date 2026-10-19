@@ -12,6 +12,7 @@
     "tsdown.config.ts"
   ],
   "references": [
+    { "path": "../ai" },
     { "path": "../harness" },
     { "path": "../provider-utils" },
     { "path": "../sandbox-just-bash" }
